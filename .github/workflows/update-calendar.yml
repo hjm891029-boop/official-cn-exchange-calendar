@@ -1,0 +1,104 @@
+name: Official exchange calendar
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 0,12 * * *'
+permissions:
+  contents: write
+concurrency:
+  group: official-calendar
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read official SSE notices and verify next-year selection
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const CALENDAR_LIST = 'https://www.sse.com.cn/disclosure/dealinstruc/closed/list/';
+          function text(html){const traditional={'節':'节','勞':'劳','動':'动','國':'国','慶':'庆','關':'关','於':'于','開':'开','證':'证','滬':'沪'};return html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,'').replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/g,' ').replace(/\s+/g,' ').replace(/[節勞動國慶關於開證滬]/g,c=>traditional[c]).trim();}
+          function calendarLinks(html){
+            const links=[];
+            for(const m of html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)){
+              const title=text(m[2]),year=title.match(/(20\d{2})年/),u=new URL(m[1],CALENDAR_LIST);
+              if(year&&title.includes('休市安排')&&u.origin==='https://www.sse.com.cn'&&/^\/disclosure\/announcement\/general\/c\/c_\d{8}_\d+\.shtml$/.test(u.pathname))links.push({url:u.href,title,year:Number(year[1]),annual:title.includes('部分节假日')});
+            }
+            return links;
+          }
+          function parseCalendarNotice(html,url,year,annual=true){
+            const article=html.match(/<div\b[^>]*class=["']allZoom["'][^>]*>([\s\S]*?)<\/div>/i)?.[1];
+            if(!article)throw new Error('Official article structure changed');
+            const body=text(article).replace(/（[^）]*）/g,'');
+            const title=text(html.match(/<title>([\s\S]*?)<\/title>/i)?.[1]??'');
+            if(!title.includes(year+'年')||!title.includes('休市安排'))throw new Error('Calendar year/title mismatch');
+            const section=body.split('一、休市安排')[1]?.split('二、')[0]??body;
+            const ranges=[];
+            for(const m of section.matchAll(/(\d{1,2})月(\d{1,2})日\s*(?:至\s*(\d{1,2})月(\d{1,2})日\s*)?休市/g)){
+              const a=String(Number(m[1])).padStart(2,'0')+'-'+String(Number(m[2])).padStart(2,'0'),b=m[3]?String(Number(m[3])).padStart(2,'0')+'-'+String(Number(m[4])).padStart(2,'0'):a;
+              const dates=[a,b].map(x=>new Date(year+'-'+x+'T00:00:00Z'));
+              if(a>b||dates.some((d,i)=>d.toISOString().slice(5,10)!==[a,b][i])||(dates[1]-dates[0])/86400000>20)throw new Error('Invalid official holiday range');
+              ranges.push([a,b]);
+            }
+            const names=['元旦','春节','清明','劳动','端午','中秋','国庆'];
+            if(!ranges.length||(annual&&(ranges.length<6||!names.every(n=>section.includes(n)))))throw new Error('Incomplete official exchange calendar');
+            const publishedAt=url.match(/c_(\d{4})(\d{2})(\d{2})_/); 
+            return {year,source:url,title,holidayNames:names.filter(n=>section.includes(n)),publishedAt:publishedAt?publishedAt.slice(1).join('-'):null,ranges:ranges.sort((a,b)=>a[0].localeCompare(b[0]))};
+          }
+          
+          import {createHash} from 'node:crypto';
+          
+          function soughtYears(now){const year=Number(new Date(now+28800000).toISOString().slice(0,4));return [year,year+1];}
+          async function officialHtml(url,fetcher=fetch){
+            const u=new URL(url);
+            if(u.origin!=='https://www.sse.com.cn'||u.username||u.password)throw new Error('Unexpected official source');
+            const r=await fetcher(url,{redirect:'manual',headers:{Accept:'text/html','User-Agent':'Mozilla/5.0 (compatible; ExchangeCalendar/1.0; public daily calendar)'},signal:AbortSignal.timeout(15000)});
+            if(!r.ok)throw new Error('SSE HTTP '+r.status);
+            const html=await r.text();if(html.length>500000)throw new Error('Oversized official notice');return html;
+          }
+          async function collectCalendar(now=Date.now(),fetcher=fetch){
+            const cutoff=new Date(now+28800000).toISOString().slice(0,10).replaceAll('-','');
+            const links=calendarLinks(await officialHtml(CALENDAR_LIST,fetcher)).filter(l=>l.url.match(/c_(\d{8})_/)[1]<=cutoff);
+            if(!links.length)throw new Error('SSE notice list unavailable');
+            const wanted=soughtYears(now),years={};
+            for(const year of wanted){
+              const annual=links.filter(l=>l.year===year&&l.annual).sort((a,b)=>b.url.localeCompare(a.url))[0];
+              if(!annual)continue;
+              const html=await officialHtml(annual.url,fetcher),entry=parseCalendarNotice(html,annual.url,year);
+              entry.sha256=createHash('sha256').update(html).digest('hex');
+              const latest=links.filter(l=>l.year===year&&!l.annual).sort((a,b)=>b.url.localeCompare(a.url))[0];
+              if(latest){
+                const extra=await officialHtml(latest.url,fetcher),notice=parseCalendarNotice(extra,latest.url,year,false);
+                entry.ranges=Array.from(new Map([...entry.ranges,...notice.ranges].map(r=>[r.join('/'),r])).values()).sort((a,b)=>a[0].localeCompare(b[0]));
+                entry.latestNotice=latest.url;entry.latestSha256=createHash('sha256').update(extra).digest('hex');
+              }
+              years[year]=entry;
+            }
+            if(!years[wanted[0]])throw new Error('Current annual SSE notice missing; preserve prior output');
+            return {schemaVersion:1,fetchedAt:new Date(now).toISOString(),listSource:CALENDAR_LIST,soughtYears:wanted,nextYear:wanted[1],nextYearPublished:Boolean(years[wanted[1]]),calendar:{version:1,exchange:'SSE/SZSE',timezone:'Asia/Shanghai',years}};
+          }
+          
+          import fs from 'node:fs';
+          const result=await collectCalendar();
+          fs.mkdirSync('data',{recursive:true});
+          fs.writeFileSync('data/calendar.json',JSON.stringify(result,null,2)+'\n');
+          console.log(JSON.stringify({source:'SSE',knownYears:Object.keys(result.calendar.years),nextYear:result.nextYear,nextYearPublished:result.nextYearPublished,fetchedAt:result.fetchedAt}));
+          // Replay real published official data with the preceding year as the clock.
+          // This verifies future-year selection without inventing any 2027 dates.
+          const replay=await collectCalendar(Date.parse('2025-12-23T02:00:00Z'));
+          if(!replay.nextYearPublished||!replay.calendar.years[2026])throw new Error('Historical next-year replay failed');
+          fs.writeFileSync('data/next-year-replay.json',JSON.stringify({replayAsOf:'2025-12-23',targetYear:2026,source:replay.calendar.years[2026].source,ranges:replay.calendar.years[2026].ranges,passed:true},null,2)+'\n');
+          
+          NODE
+      - name: Commit only public calendar facts
+        shell: bash
+        run: |
+          git config user.name 'calendar-bot'
+          git config user.email 'calendar-bot@users.noreply.github.com'
+          git add data/calendar.json data/next-year-replay.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Refresh official calendar facts and collection timestamp'
+            git push
+          fi
