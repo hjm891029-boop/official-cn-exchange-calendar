@@ -14,6 +14,20 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+      - name: Diagnose official HTTPS routes
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import {execFileSync} from 'node:child_process';
+          const urls=[
+           'https://www.sse.com.cn/disclosure/dealinstruc/closed/list/',
+           'https://english.sse.com.cn/start/trading/schedule/',
+           'https://www.szse.cn/disclosure/notice/t20251222_618087.html',
+           'https://www.szse.cn/www/English/services/trading/calendar/index.html'
+          ];
+          await Promise.all(urls.map(async url=>{try{const r=execFileSync('curl',['-4','--silent','--show-error','--max-time','15','--write-out','\\nHTTP:%{http_code}',url],{encoding:'utf8',maxBuffer:1000000});console.log(JSON.stringify({url,http:r.match(/HTTP:(\d+)$/)?.[1],bytes:r.length,title:r.match(/<title>([\s\S]*?)<\/title>/i)?.[1]}));}catch(e){console.log(JSON.stringify({url,error:'curl_'+e.status}));}}));
+          NODE
       - name: Read official SSE notices and verify next-year selection
         shell: bash
         env:
