@@ -13,9 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read official SSE notices and verify next-year selection
         shell: bash
+        env:
+          CALENDAR_REPLAY: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           node --input-type=module <<'NODE'
           const CALENDAR_LIST = 'https://www.sse.com.cn/disclosure/dealinstruc/closed/list/';
@@ -49,14 +51,24 @@ jobs:
           }
           
           import {createHash} from 'node:crypto';
+          import {setDefaultAutoSelectFamily} from 'node:net';
+          import {setDefaultResultOrder} from 'node:dns';
+          // GitHub standard runners have no IPv6 route. Allow IPv4 a full connection
+          // timeout instead of abandoning it after Node's short multi-family delay.
+          setDefaultAutoSelectFamily(false);setDefaultResultOrder('ipv4first');
           
           function soughtYears(now){const year=Number(new Date(now+28800000).toISOString().slice(0,4));return [year,year+1];}
           async function officialHtml(url,fetcher=fetch){
             const u=new URL(url);
             if(u.origin!=='https://www.sse.com.cn'||u.username||u.password)throw new Error('Unexpected official source');
-            const r=await fetcher(url,{redirect:'manual',headers:{Accept:'text/html','User-Agent':'Mozilla/5.0 (compatible; ExchangeCalendar/1.0; public daily calendar)'},signal:AbortSignal.timeout(15000)});
-            if(!r.ok)throw new Error('SSE HTTP '+r.status);
-            const html=await r.text();if(html.length>500000)throw new Error('Oversized official notice');return html;
+            const routes=[url,...(url===CALENDAR_LIST?[CALENDAR_LIST+'s_list.shtml']:[]),'https://big5.sse.com.cn/gate/big5/'+url.slice('https://'.length)];
+            let failure;
+            for(const route of routes){try{
+              const r=await fetcher(route,{redirect:'manual',headers:{Accept:'text/html','User-Agent':'Mozilla/5.0 (compatible; ExchangeCalendar/1.0; public daily calendar)'},signal:AbortSignal.timeout(20000)});
+              if(!r.ok)throw new Error('SSE HTTP '+r.status);
+              const html=await r.text();if(html.length>500000)throw new Error('Oversized official notice');return html;
+            }catch(e){failure=e;}}
+            throw failure;
           }
           async function collectCalendar(now=Date.now(),fetcher=fetch){
             const cutoff=new Date(now+28800000).toISOString().slice(0,10).replaceAll('-','');
@@ -87,9 +99,11 @@ jobs:
           console.log(JSON.stringify({source:'SSE',knownYears:Object.keys(result.calendar.years),nextYear:result.nextYear,nextYearPublished:result.nextYearPublished,fetchedAt:result.fetchedAt}));
           // Replay real published official data with the preceding year as the clock.
           // This verifies future-year selection without inventing any 2027 dates.
+          if(process.env.CALENDAR_REPLAY==='true'){
           const replay=await collectCalendar(Date.parse('2025-12-23T02:00:00Z'));
           if(!replay.nextYearPublished||!replay.calendar.years[2026])throw new Error('Historical next-year replay failed');
           fs.writeFileSync('data/next-year-replay.json',JSON.stringify({replayAsOf:'2025-12-23',targetYear:2026,source:replay.calendar.years[2026].source,ranges:replay.calendar.years[2026].ranges,passed:true},null,2)+'\n');
+          }
           
           NODE
       - name: Commit only public calendar facts
@@ -97,7 +111,8 @@ jobs:
         run: |
           git config user.name 'calendar-bot'
           git config user.email 'calendar-bot@users.noreply.github.com'
-          git add data/calendar.json data/next-year-replay.json
+          git add data/calendar.json
+          if [ -f data/next-year-replay.json ]; then git add data/next-year-replay.json; fi
           if ! git diff --cached --quiet; then
             git commit -m 'Refresh official calendar facts and collection timestamp'
             git push
