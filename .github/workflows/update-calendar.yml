@@ -14,20 +14,6 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Diagnose official HTTPS routes
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          node --input-type=module <<'NODE'
-          import {execFileSync} from 'node:child_process';
-          const urls=[
-           'https://www.sse.com.cn/disclosure/dealinstruc/closed/list/',
-           'https://english.sse.com.cn/start/trading/schedule/',
-           'https://www.szse.cn/disclosure/notice/t20251222_618087.html',
-           'https://www.szse.cn/www/English/services/trading/calendar/index.html'
-          ];
-          await Promise.all(urls.map(async url=>{try{const r=execFileSync('curl',['-4','--silent','--show-error','--max-time','15','--write-out','\\nHTTP:%{http_code}',url],{encoding:'utf8',maxBuffer:1000000});console.log(JSON.stringify({url,http:r.match(/HTTP:(\d+)$/)?.[1],bytes:r.length,title:r.match(/<title>([\s\S]*?)<\/title>/i)?.[1]}));}catch(e){console.log(JSON.stringify({url,error:'curl_'+e.status}));}}));
-          NODE
       - name: Read official SSE notices and verify next-year selection
         shell: bash
         env:
@@ -65,14 +51,20 @@ jobs:
           }
           
           import {createHash} from 'node:crypto';
-          import {setDefaultAutoSelectFamily} from 'node:net';
-          import {setDefaultResultOrder} from 'node:dns';
-          // GitHub standard runners have no IPv6 route. Allow IPv4 a full connection
-          // timeout instead of abandoning it after Node's short multi-family delay.
-          setDefaultAutoSelectFamily(false);setDefaultResultOrder('ipv4first');
+          import {execFile} from 'node:child_process';
+          import {promisify} from 'node:util';
+          const runCurl=promisify(execFile);
           
           function soughtYears(now){const year=Number(new Date(now+28800000).toISOString().slice(0,4));return [year,year+1];}
-          async function officialHtml(url,fetcher=fetch){
+          // The standard cloud runner successfully reads SSE with curl; Node's TLS
+          // client receives HTTP 403. Keep certificate checks and redirects disabled.
+          async function curlFetch(url){
+            const {stdout}=await runCurl('curl',['-4','--silent','--show-error','--max-time','20','--max-filesize','500000','--write-out','\nCALENDAR_HTTP:%{http_code}',url],{encoding:'utf8',maxBuffer:600000,timeout:25000});
+            const match=stdout.match(/\nCALENDAR_HTTP:(\d{3})$/);if(!match)throw new Error('Missing official HTTP status');
+            const status=Number(match[1]),body=stdout.slice(0,match.index);
+            return {ok:status>=200&&status<300,status,text:async()=>body};
+          }
+          async function officialHtml(url,fetcher=curlFetch){
             const u=new URL(url);
             if(u.origin!=='https://www.sse.com.cn'||u.username||u.password)throw new Error('Unexpected official source');
             const routes=[url,...(url===CALENDAR_LIST?[CALENDAR_LIST+'s_list.shtml']:[]),'https://big5.sse.com.cn/gate/big5/'+url.slice('https://'.length)];
@@ -84,7 +76,7 @@ jobs:
             }catch(e){failure=e;}}
             throw failure;
           }
-          async function collectCalendar(now=Date.now(),fetcher=fetch){
+          async function collectCalendar(now=Date.now(),fetcher=curlFetch){
             const cutoff=new Date(now+28800000).toISOString().slice(0,10).replaceAll('-','');
             const links=calendarLinks(await officialHtml(CALENDAR_LIST,fetcher)).filter(l=>l.url.match(/c_(\d{8})_/)[1]<=cutoff);
             if(!links.length)throw new Error('SSE notice list unavailable');
