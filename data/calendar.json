@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "fetchedAt": "2026-10-11T15:56:22.391Z",
+  "listSource": "https://www.sse.com.cn/disclosure/dealinstruc/closed/list/",
+  "soughtYears": [
+    2026,
+    2027
+  ],
+  "nextYear": 2027,
+  "nextYearPublished": false,
+  "calendar": {
+    "version": 1,
+    "exchange": "SSE/SZSE",
+    "timezone": "Asia/Shanghai",
+    "years": {
+      "2026": {
+        "year": 2026,
+        "source": "https://www.sse.com.cn/disclosure/announcement/general/c/c_20251222_10802507.shtml",
+        "title": "关于上海证券交易所2026年部分节假日休市安排的通知 | 上海证券交易所",
+        "holidayNames": [
+          "元旦",
+          "春节",
+          "清明",
+          "劳动",
+          "端午",
+          "中秋",
+          "国庆"
+        ],
+        "publishedAt": "2025-12-22",
+        "ranges": [
+          [
+            "01-01",
+            "01-03"
+          ],
+          [
+            "02-15",
+            "02-23"
+          ],
+          [
+            "04-04",
+            "04-06"
+          ],
+          [
+            "05-01",
+            "05-05"
+          ],
+          [
+            "06-19",
+            "06-21"
+          ],
+          [
+            "09-25",
+            "09-27"
+          ],
+          [
+            "10-01",
+            "10-07"
+          ]
+        ],
+        "sha256": "4e260b815ce1309175ed994e6490a4ccd51b998a5f92bcdc41cec00fc6823dc7",
+        "latestNotice": "https://www.sse.com.cn/disclosure/announcement/general/c/c_20260915_10832273.shtml",
+        "latestSha256": "779cbf7cc7ab2c4b34db17ceee29e266bc483e075860d8313b85c1d5d0f307bc"
+      }
+    }
+  }
+}
