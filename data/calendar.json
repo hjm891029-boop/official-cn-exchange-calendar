@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "fetchedAt": "2026-11-20T07:18:51.911Z",
+  "fetchedAt": "2026-11-20T20:22:59.181Z",
   "listSource": "https://www.sse.com.cn/disclosure/dealinstruc/closed/list/",
   "soughtYears": [
     2026,
@@ -57,9 +57,9 @@
             "10-07"
           ]
         ],
-        "sha256": "ff188c710b8904758c185eb955e9eaa2c9bd7c2061af984d4f1d743f899c12a4",
+        "sha256": "6414ab8f4316c318d816b68aefc4843a5ea87ec75d543f614e3e53aa7688f33c",
         "latestNotice": "https://www.sse.com.cn/disclosure/announcement/general/c/c_20260915_10832273.shtml",
-        "latestSha256": "070610b8371dcb2fb094cbbeaf9ecb1bf515949c6da09edb7afe4888d6f574b4"
+        "latestSha256": "4bd3149ba04a7a94b262088fa5254c605811a9d823f4c5561700e36f5d3cf0bc"
       }
     }
   }
